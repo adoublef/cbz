@@ -43,7 +43,9 @@ func TestHandler(t *testing.T) {
 
 		// stream zip
 		zr := zipstream.NewReader(res.Body)
+		var i int
 		for zr.Next() {
+			i++
 			e, err := zr.Entry()
 			ok(t, err)
 			// is another file inside
@@ -54,7 +56,9 @@ func TestHandler(t *testing.T) {
 
 			// internal zip
 			r := zipstream.NewReader(rc)
+			var j int
 			for r.Next() {
+				j++
 				e, err := r.Entry()
 				ok(t, err)
 				equal(t, e.IsDir(), false)
@@ -66,9 +70,12 @@ func TestHandler(t *testing.T) {
 				equal(t, n, 86387)
 				ok(t, rc.Close())
 			}
+			// count number of images
 			ok(t, rc.Close())
+			equal(t, j, numImages)
 		}
 		ok(t, zr.Err())
+		equal(t, i, numChapters)
 
 		// f, err := os.Create("output.zip")
 		// ok(t, err)
