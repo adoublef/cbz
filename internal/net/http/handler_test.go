@@ -44,8 +44,29 @@ func TestHandler(t *testing.T) {
 		// stream zip
 		zr := zipstream.NewReader(res.Body)
 		for zr.Next() {
-			_, err := zr.Entry()
+			e, err := zr.Entry()
 			ok(t, err)
+			// is another file inside
+			equal(t, e.IsDir(), false)
+
+			rc, err := e.Open()
+			ok(t, err)
+
+			// internal zip
+			r := zipstream.NewReader(rc)
+			for r.Next() {
+				e, err := r.Entry()
+				ok(t, err)
+				equal(t, e.IsDir(), false)
+
+				rc, err := e.Open()
+				ok(t, err)
+				n, err := io.Copy(io.Discard, rc)
+				ok(t, err)
+				equal(t, n, 86387)
+				ok(t, rc.Close())
+			}
+			ok(t, rc.Close())
 		}
 		ok(t, zr.Err())
 
