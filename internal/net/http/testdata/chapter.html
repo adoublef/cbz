@@ -1,0 +1,5 @@
+{{ $base := $.BaseURL }} {{ $chapter := $.Chapter }} {{ $n := $.N }} {{ range $i, $_ := N $n }}
+<!--todo handle padding-->
+{{ $path := join "-" (iota $chapter) (iota (inc $i)) }}
+<img src="{{ url $base (join "." $path "png") }}" />
+{{ end }}
