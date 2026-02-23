@@ -212,7 +212,7 @@ func apiClient(t testing.TB, chapters, images int) (apiC *http.Client, apiURL st
 		}
 	})
 
-	s := httptest.NewServer(mux)
+	s := httptest.NewTLSServer(mux)
 	t.Cleanup(s.Close)
 	return s.Client(), s.URL
 }
