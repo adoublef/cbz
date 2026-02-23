@@ -21,11 +21,15 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func Handler(apiC, imgC *http.Client, tempDir string) http.Handler {
-	return handleSeries(apiC, imgC, tempDir)
+func Handler(httpC *http.Client, tempDir string) http.Handler {
+	// using a sync.Map for various http.Clients
+	// key: domain
+	// value: http.Client
+	// See https://blog.wollomatic.de/posts/2025-01-28-go-tls-certificates/
+	return handleSeries(httpC, tempDir)
 }
 
-func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
+func handleSeries(httpC *http.Client, tempDir string) handlerFunc {
 	parse := func(w http.ResponseWriter, r *http.Request) (*url.URL, error) {
 		parsed, err := url.Parse(r.URL.Query().Get("series_url"))
 		if err != nil {
@@ -63,7 +67,7 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 
 	zipReader := func(ctx context.Context, series *url.URL, rfs *os.Root) io.ReadCloser {
 		g, ctx := errgroup.WithContext(ctx)
-		g.SetLimit(4)
+		g.SetLimit(5)
 
 		chapters := make(chan *url.URL)
 		g.Go(func() error {
@@ -71,7 +75,7 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 
 			uri := series.JoinPath("full-chapter-list")
 			req, err1 := http.NewRequestWithContext(ctx, http.MethodGet, uri.String(), nil)
-			res, err2 := apiC.Do(req)
+			res, err2 := httpC.Do(req)
 			if err := cmp.Or(err1, err2); err != nil {
 				return err
 			}
@@ -118,9 +122,9 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 		}
 		images := make(chan msg)
 
-		cbz := make(chan string)
+		names := make(chan string)
 		g.Go(func() error {
-			defer func() { close(images); close(cbz) }()
+			defer func() { close(images); close(names) }()
 
 			g, ctx := errgroup.WithContext(ctx)
 			g.SetLimit(1)
@@ -140,7 +144,7 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 						uri := chapter.JoinPath("images")
 						// we need the url Values added here
 						req, err1 := http.NewRequestWithContext(ctx, http.MethodGet, uri.String(), nil)
-						res, err2 := apiC.Do(req)
+						res, err2 := httpC.Do(req)
 						if err := cmp.Or(err1, err2); err != nil {
 							return err
 						}
@@ -179,7 +183,9 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 					// 2) gets a response and creates a zip
 					g.Go(func() error {
 						// temp zip file that we can now feed data into
-						f, err := rfs.Create(path.Base(chapter.Path) + ".zip") // for now just use the id, find a way to get the actual position
+						name := path.Base(chapter.Path) + ".zip"
+
+						f, err := rfs.Create(name) // for now just use the id, find a way to get the actual position
 						if err != nil {
 							return err
 						}
@@ -200,7 +206,7 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 						select {
 						case <-ctx.Done():
 							return ctx.Err()
-						case cbz <- path.Base(f.Name()): // the final cbz
+						case names <- name: // the final cbz
 						}
 						return nil
 					})
@@ -219,7 +225,9 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 				g.Go(func() error {
 					defer msg.done() // no likey
 
-					f, err := rfs.Create(path.Base(msg.url.Path))
+					name := path.Base(msg.url.Path)
+
+					f, err := rfs.Create(name)
 					if err != nil {
 						return err
 					}
@@ -227,7 +235,7 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 
 					// query image and download the file
 					req, err1 := http.NewRequestWithContext(ctx, http.MethodGet, msg.url.String(), nil)
-					res, err2 := imgC.Do(req)
+					res, err2 := httpC.Do(req)
 					if err := cmp.Or(err1, err2); err != nil {
 						return err
 					}
@@ -253,7 +261,7 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
-					case msg.reply <- path.Base(f.Name()): // signal that we are done
+					case msg.reply <- name: // signal that we are done
 					}
 					return nil
 				})
@@ -263,10 +271,10 @@ func handleSeries(apiC, imgC *http.Client, tempDir string) handlerFunc {
 
 		pr, pw := io.Pipe()
 		g.Go(func() error {
-			// collect all previous chapters
+			// collect all previous chapters (+ cover.jpg)
 			zw := zip.NewWriter(pw)
 			defer zw.Flush()
-			for filename := range cbz {
+			for filename := range names {
 				if err := writeTo(zw, rfs, filename); err != nil {
 					return err
 				}

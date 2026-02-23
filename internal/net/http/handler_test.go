@@ -29,11 +29,10 @@ func TestHandler(t *testing.T) {
 	t.Run("OK", func(t *testing.T) {
 		ctx := t.Context()
 
-		imgC, imgURL := imgClient(t)
-		apiC, apiURL := apiClient(t, imgURL, numChapters, numImages)
+		apiC, apiURL := apiClient(t, numChapters, numImages)
 
 		tempDir := t.TempDir()
-		testC, testURL := testClient(t, apiC, imgC, tempDir)
+		testC, testURL := testClient(t, apiC, tempDir)
 
 		url := fmt.Sprintf("%s/?series_url=%s", testURL, apiURL+"/series/1")
 		req, err1 := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -43,6 +42,7 @@ func TestHandler(t *testing.T) {
 
 		// stream zip
 		zr := zipstream.NewReader(res.Body)
+
 		var i int
 		for zr.Next() {
 			i++
@@ -88,10 +88,10 @@ func TestHandler(t *testing.T) {
 	})
 }
 
-func testClient(t testing.TB, apiC, imgC *http.Client, tempDir string) (*http.Client, string) {
+func testClient(t testing.TB, httpC *http.Client, tempDir string) (*http.Client, string) {
 	t.Helper()
 
-	s := httptest.NewServer(Handler(apiC, imgC, tempDir))
+	s := httptest.NewServer(Handler(httpC, tempDir))
 	t.Cleanup(s.Close)
 
 	return s.Client(), s.URL
@@ -114,7 +114,7 @@ func equal[K comparable](t testing.TB, got, want K) {
 //go:embed testdata/*.html testdata/*.xml testdata/*.jpg
 var embedFS embed.FS
 
-func apiClient(t testing.TB, imgURL string, chapters, images int) (apiC *http.Client, apiURL string) {
+func apiClient(t testing.TB, chapters, images int) (apiC *http.Client, apiURL string) {
 	t.Helper()
 
 	funcMap := template.FuncMap{
@@ -184,24 +184,14 @@ func apiClient(t testing.TB, imgURL string, chapters, images int) (apiC *http.Cl
 		}{
 			N:       images,
 			Chapter: int(id),
-			BaseURL: imgURL,
+			BaseURL: apiURL,
 		}
 		if err := chapter.Execute(w, data); err != nil {
 			t.Fatal(err)
 		}
 	})
-
-	s := httptest.NewServer(mux)
-	t.Cleanup(s.Close)
-	return s.Client(), s.URL
-}
-
-func imgClient(t testing.TB) (imgC *http.Client, imgURL string) {
-	t.Helper()
-
-	mux := http.NewServeMux()
 	// return a file
-	mux.HandleFunc("GET /{image}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /images/{image}", func(w http.ResponseWriter, r *http.Request) {
 		// parse path?
 
 		f, err1 := embedFS.Open("testdata/image.jpg") // base64
